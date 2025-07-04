@@ -2,7 +2,7 @@ import axios from 'axios'
 
 // 创建axios实例
 const api = axios.create({
-  baseURL: 'http://192.168.2.88:8000', // FastAPI后端地址
+  baseURL: 'http://localhost:8000', // FastAPI后端地址
   timeout: 10000, // 请求超时时间（毫秒）
 })
 

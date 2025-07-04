@@ -32,5 +32,17 @@ app.use(ElementPlus, {
   locale: zhCn, // 设置中文语言包
 })
 
+// 屏蔽 ResizeObserver loop completed with undelivered notifications 警告
+const realWarn = window.console.warn
+window.console.warn = function(msg, ...args) {
+  if (
+    typeof msg === 'string' &&
+    msg.includes('ResizeObserver loop completed with undelivered notifications')
+  ) {
+    return
+  }
+  realWarn.call(window.console, msg, ...args)
+}
+
 // 挂载应用
 app.mount('#app')

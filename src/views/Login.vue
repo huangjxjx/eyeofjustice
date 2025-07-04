@@ -185,8 +185,11 @@ export default {
           password: loginForm.password
         }
         const res = await loginUser(payload)
+        console.log('登录响应数据:', res.data)
         // 存储用户信息到pinia
         userStore.setUserInfo(res.data)
+        sessionStorage.setItem('userInfo', JSON.stringify(res.data))
+        console.log('存储后的用户信息:', userStore.userInfo)
         ElMessage.success('登录成功！')
         // 跳转到主页面
         router.push('/dashboard')

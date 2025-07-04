@@ -76,7 +76,7 @@ router.beforeEach((to, from, next) => {
 
   // 检查是否需要登录
   if (to.meta.requiresAuth) {
-    const userInfo = localStorage.getItem('userInfo')
+    const userInfo = sessionStorage.getItem('userInfo')
     if (!userInfo) {
       next('/login')
       return

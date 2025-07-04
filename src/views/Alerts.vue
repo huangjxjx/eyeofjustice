@@ -16,7 +16,7 @@
         <el-icon><Warning /></el-icon>
         <span>预警事件列表</span>
       </div>
-      <el-table :data="alerts" style="width: 100%" size="small" :row-class-name="rowClass">
+      <el-table :data="alerts" style="width: 100%" size="small" :row-class-name="rowClass" :loading="loading">
         <el-table-column prop="type" label="类型" width="90">
           <template #default="{ row }">
             <el-tag v-if="row.type==='RFID'" type="warning">RFID</el-tag>
@@ -29,8 +29,6 @@
           </template>
         </el-table-column>
         <el-table-column prop="desc" label="事件描述" min-width="180" />
-        <el-table-column prop="person" label="涉事人" width="100" />
-        <el-table-column prop="location" label="位置" width="120" />
         <el-table-column prop="time" label="触发时间" width="160" />
         <el-table-column prop="status" label="处理状态" width="120">
           <template #default="{ row }">
@@ -38,12 +36,14 @@
             <el-tag v-else type="success">已处理</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="120">
+        <el-table-column label="操作" width="200">
           <template #default="{ row }">
-            <el-button v-if="row.status==='未处理'" type="primary" size="small" @click="markHandled(row)">
+            <el-button v-if="row.status==='未处理'" type="primary" size="small" @click="handleMarkHandled(row)">
               标记为已处理
             </el-button>
-            <span v-else style="color:#aaa;">--</span>
+            <el-button type="danger" size="small" @click="handleDelete(row)">
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -52,18 +52,18 @@
 </template>
 
 <script>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { useUserStore } from '@/stores/user'
+import { getUserAlerts, deleteAlert, updateAlert } from '@/api/alerts'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 export default {
   name: 'AlertsView',
   setup() {
-    // 模拟预警数据
-    const alerts = ref([
-      { type: 'RFID', level: '高', desc: '检测到推搡同学', person: '张三', location: '教学楼A', time: '2024-06-01 09:01:12', status: '未处理' },
-      { type: '语音', level: '中', desc: '检测到威胁性言语', person: '李四', location: '食堂', time: '2024-06-01 09:02:33', status: '未处理' },
-      { type: 'RFID', level: '低', desc: '检测到异常聚集', person: '王五', location: '操场', time: '2024-06-01 09:03:10', status: '已处理' },
-      { type: '语音', level: '高', desc: '检测到辱骂', person: '赵六', location: '教室', time: '2024-06-01 09:04:20', status: '未处理' }
-    ])
+    const userStore = useUserStore()
+    const alerts = ref([])
+    const loading = ref(false)
+
     // 级别颜色
     const levelColor = (level) => {
       if (level === '高') return 'danger'
@@ -74,18 +74,70 @@ export default {
     const rowClass = ({ row }) => {
       return row.status === '未处理' ? 'row-unhandled' : ''
     }
-    // 标记为已处理
-    const markHandled = (row) => {
-      row.status = '已处理'
+    // 标记为已处理（调用API）
+    const handleMarkHandled = async (row) => {
+      try {
+        loading.value = true
+        await updateAlert(row.id, { status: '已处理' })
+        ElMessage.success('已标记为已处理')
+        fetchAlerts()
+      } catch (e) {
+        ElMessage.error('操作失败')
+      } finally {
+        loading.value = false
+      }
+    }
+    // 删除预警
+    const handleDelete = async (row) => {
+      try {
+        await ElMessageBox.confirm('确定要删除该预警吗？', '删除确认', { type: 'warning' })
+        loading.value = true
+        await deleteAlert(row.id)
+        ElMessage.success('删除成功')
+        fetchAlerts()
+      } catch (e) {
+        if (e !== 'cancel') ElMessage.error('删除失败')
+      } finally {
+        loading.value = false
+      }
     }
     // 计算是否有未处理预警
     const hasUnhandledAlerts = computed(() => alerts.value.some(a => a.status === '未处理'))
+
+    // 获取alerts
+    const fetchAlerts = async () => {
+      if (!userStore.userId) {
+        ElMessage.error('用户未登录，无法获取预警')
+        return
+      }
+      loading.value = true
+      try {
+        const res = await getUserAlerts(userStore.userId)
+        // 映射后端字段到前端表格字段
+        alerts.value = (res.data || []).map(item => ({
+          ...item,
+          desc: item.description,
+          time: item.timestamp
+        }))
+      } catch (e) {
+        ElMessage.error('获取预警失败: ' + (e.message || '未知错误'))
+      } finally {
+        loading.value = false
+      }
+    }
+
+    onMounted(() => {
+      fetchAlerts()
+    })
+
     return {
       alerts,
       levelColor,
       rowClass,
-      markHandled,
-      hasUnhandledAlerts
+      hasUnhandledAlerts,
+      loading,
+      handleDelete,
+      handleMarkHandled
     }
   }
 }

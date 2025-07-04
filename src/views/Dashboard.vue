@@ -5,22 +5,57 @@
       <div class="header-left">
         <h2 class="logo">正义之眼</h2>
         <span class="subtitle">智能校园安全监测系统</span>
+        <el-tag
+          v-if="hasUnhandledAlerts"
+          type="danger"
+          effect="dark"
+          style="margin-left: 16px;cursor:pointer"
+          @click="goToAlerts"
+        >
+          有未处理预警
+        </el-tag>
+        <el-tag
+          v-else
+          type="success"
+          effect="plain"
+          style="margin-left: 16px;"
+        >
+          全部预警已处理
+        </el-tag>
       </div>
       <div class="header-right">
-        <el-button type="success" style="margin-right: 18px;" @click="startMonitor">开启监测</el-button>
+        <el-button
+          type="success"
+          style="margin-right: 18px;"
+          v-if="!voiceConnected"
+          @click="startMonitor"
+        >
+          开启监测
+        </el-button>
+        <el-button
+          type="danger"
+          style="margin-right: 18px;"
+          v-else
+          @click="stopMonitor"
+        >
+          结束监测
+        </el-button>
+        <el-tag :type="voiceConnected ? 'success' : 'info'">
+          {{ voiceConnected ? '已连接' : '未连接' }}
+        </el-tag>
+        <span class="username" style="margin-left: 18px; font-weight: bold; color: #333;">
+          {{ userInfo.name || userInfo.username || '用户' }}
+        </span>
         <el-dropdown @command="handleCommand">
           <span class="user-info">
             <el-avatar :size="32">
               <el-icon><User /></el-icon>
             </el-avatar>
-            <span class="username">{{ userInfo.name || '用户' }}</span>
             <el-icon><ArrowDown /></el-icon>
           </span>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="profile">个人资料</el-dropdown-item>
-              <el-dropdown-item command="settings">系统设置</el-dropdown-item>
-              <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
+              <el-dropdown-item command="logout">退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -126,21 +161,52 @@
 </template>
 
 <script>
-import { reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useVoiceStore } from '@/stores/voice'
+import { useUserStore } from '@/stores/user'
+import { getUserAlerts } from '@/api/alerts'
+import { useAlertsStore } from '@/stores/alerts'
 
 export default {
   name: 'DashboardView',
   setup() {
     const router = useRouter()
-    
+    const userStore = useUserStore()
+    const voiceStore = useVoiceStore()
+    const alerts = ref([])
+    const loadingAlerts = ref(false)
+    const alertsStore = useAlertsStore()
+    let alertsTimer = null
+
     // 用户信息
     const userInfo = reactive({
       name: '管理员',
       email: 'admin@test.com',
-      role: 'admin'
+      role: 'admin',
+      username: ''
     })
+
+    // 检测状态
+    const voiceConnected = computed(() => voiceStore.connected)
+
+    // 预警状态
+    const hasUnhandledAlerts = computed(() => alerts.value.some(a => a.status === '未处理'))
+
+    // 获取alerts
+    const fetchAlerts = async () => {
+      if (!userStore.userId) return
+      loadingAlerts.value = true
+      try {
+        const res = await getUserAlerts(userStore.userId)
+        alerts.value = res.data || []
+      } catch (e) {
+        // 可选：ElMessage.error('获取预警失败')
+      } finally {
+        loadingAlerts.value = false
+      }
+    }
 
     onMounted(() => {
       // 获取用户信息
@@ -148,8 +214,20 @@ export default {
       if (storedUserInfo) {
         const parsedInfo = JSON.parse(storedUserInfo)
         userInfo.email = parsedInfo.email
-        userInfo.name = parsedInfo.email.split('@')[0] || '用户'
+        userInfo.name = parsedInfo.name || parsedInfo.username || parsedInfo.email.split('@')[0] || '用户'
+        userInfo.username = parsedInfo.username || parsedInfo.name || parsedInfo.email.split('@')[0] || '用户'
       }
+      fetchAlerts()
+      // 定时轮询alerts并全局弹窗
+      alertsStore.fetchAlertsAndNotify()
+      alertsTimer = setInterval(() => {
+        alertsStore.fetchAlertsAndNotify()
+      }, 10000)
+    })
+
+    // 页面卸载时清理定时器
+    onUnmounted(() => {
+      if (alertsTimer) clearInterval(alertsTimer)
     })
 
     // 处理下拉菜单命令
@@ -183,23 +261,23 @@ export default {
       }
     }
 
-    // 开启监测按钮事件
+    // 检测控制
     const startMonitor = () => {
-      // 这里可以扩展实际监测功能的调用
+      voiceStore.connectWebSocket()
       ElMessage.success('监测已开启')
     }
+    const stopMonitor = () => {
+      voiceStore.disconnectWebSocket()
+      ElMessage.success('监测已结束')
+    }
 
-    // 导航到监测页面
+    // 跳转
     const goToMonitor = () => {
       router.push('/monitor')
     }
-
-    // 导航到预警页面
     const goToAlerts = () => {
       router.push('/alerts')
     }
-
-    // 导航到分析页面
     const goToAnalytics = () => {
       router.push('/analytics')
     }
@@ -210,13 +288,18 @@ export default {
       goToMonitor,
       goToAlerts,
       goToAnalytics,
-      startMonitor
+      startMonitor,
+      stopMonitor,
+      voiceConnected,
+      hasUnhandledAlerts,
+      loadingAlerts
     }
   }
 }
 </script>
 
 <style scoped>
+
 .dashboard-container {
   min-height: 100vh;
   background: #f5f7fa;

@@ -58,9 +58,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import * as echarts from 'echarts'
 import { TrendCharts, PieChart, Histogram, Warning } from '@element-plus/icons-vue'
+import { getAlertCountByDate, getAlertTypeCountByDate } from '@/api/alerts'
+import { useUserStore } from '@/stores/user'
+
+const userStore = useUserStore()
+const userId = userStore.userId
 
 const dateRange = ref([])
 const dangerList = ref([
@@ -79,16 +84,18 @@ let trendChartInstance = null
 let typeChartInstance = null
 let keywordChartInstance = null
 
-const trendOption = {
+// 霸凌事件趋势图配置（动态）
+const trendOption = ref({
   tooltip: { trigger: 'axis' },
   grid: { left: 40, right: 20, top: 40, bottom: 40 },
-  xAxis: { type: 'category', data: ['6-01', '6-02', '6-03', '6-04', '6-05', '6-06', '6-07'] },
+  xAxis: { type: 'category', data: [] },
   yAxis: { type: 'value' },
   series: [
-    { name: '霸凌事件数', type: 'line', data: [2, 3, 1, 4, 2, 5, 3], smooth: true, areaStyle: {} }
+    { name: '霸凌事件数', type: 'line', data: [], smooth: true, areaStyle: {} }
   ]
-}
-const typeOption = {
+})
+// 类型分布图配置（动态）
+const typeOption = ref({
   tooltip: { trigger: 'item' },
   legend: { top: 'bottom' },
   series: [
@@ -99,13 +106,10 @@ const typeOption = {
       avoidLabelOverlap: false,
       itemStyle: { borderColor: '#fff', borderWidth: 2 },
       label: { show: true, position: 'outside' },
-      data: [
-        { value: 8, name: 'RFID' },
-        { value: 6, name: '语音' }
-      ]
+      data: []
     }
   ]
-}
+})
 const keywordOption = {
   tooltip: {},
   grid: { left: 40, right: 20, top: 40, bottom: 40 },
@@ -116,6 +120,115 @@ const keywordOption = {
   ]
 }
 
+/**
+ * 获取指定日期区间的所有日期字符串数组
+ */
+function getDateArray(start, end) {
+  const arr = []
+  const dt = new Date(start)
+  const endDt = new Date(end)
+  while (dt <= endDt) {
+    arr.push(dt.toISOString().slice(0, 10))
+    dt.setDate(dt.getDate() + 1)
+  }
+  return arr
+}
+
+/**
+ * 工具函数：将Date对象或字符串格式化为'YYYY-MM-DD'
+ */
+function formatDateToYMD(date) {
+  if (!date) return ''
+  if (typeof date === 'string') return date.slice(0, 10)
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+/**
+ * 拉取趋势数据并更新图表
+ */
+async function fetchTrendData() {
+  let start, end
+  if (dateRange.value && dateRange.value.length === 2) {
+    start = formatDateToYMD(dateRange.value[0])
+    end = formatDateToYMD(dateRange.value[1])
+  } else {
+    // 默认最近7天
+    const today = new Date()
+    const before = new Date()
+    before.setDate(today.getDate() - 6)
+    start = formatDateToYMD(before)
+    end = formatDateToYMD(today)
+    dateRange.value = [start, end]
+  }
+  // 请求接口
+  try {
+    const res = await getAlertCountByDate({
+      user_id: userId,
+      start_date: start,
+      end_date: end
+    })
+    // 组装横坐标和数据
+    const dateArr = getDateArray(start, end)
+    const countMap = {}
+    ;(res.data || []).forEach(item => {
+      countMap[item.date] = item.count
+    })
+    const dataArr = dateArr.map(d => countMap[d] || 0)
+    // 更新option
+    trendOption.value.xAxis.data = dateArr.map(d => d.slice(5)) // 只显示月-日
+    trendOption.value.series[0].data = dataArr
+    // 更新图表
+    if (trendChartInstance) {
+      trendChartInstance.setOption(trendOption.value)
+    }
+  } catch (e) {
+    // 错误处理
+    trendOption.value.xAxis.data = []
+    trendOption.value.series[0].data = []
+    if (trendChartInstance) trendChartInstance.setOption(trendOption.value)
+  }
+}
+
+/**
+ * 拉取类型分布数据并更新图表
+ */
+async function fetchTypeData() {
+  let start, end
+  if (dateRange.value && dateRange.value.length === 2) {
+    start = formatDateToYMD(dateRange.value[0])
+    end = formatDateToYMD(dateRange.value[1])
+  } else {
+    // 默认最近7天
+    const today = new Date()
+    const before = new Date()
+    before.setDate(today.getDate() - 6)
+    start = formatDateToYMD(before)
+    end = formatDateToYMD(today)
+  }
+  try {
+    const res = await getAlertTypeCountByDate({
+      user_id: userId,
+      start_date: start,
+      end_date: end
+    })
+    // 组装饼图数据
+    const dataArr = [
+      { value: res.data['RFID霸凌检测'] || 0, name: 'RFID' },
+      { value: res.data['语音霸凌检测'] || 0, name: '语音' }
+    ]
+    typeOption.value.series[0].data = dataArr
+    if (typeChartInstance) {
+      typeChartInstance.setOption(typeOption.value)
+    }
+  } catch (e) {
+    typeOption.value.series[0].data = []
+    if (typeChartInstance) typeChartInstance.setOption(typeOption.value)
+  }
+}
+
 function resizeCharts() {
   trendChartInstance && trendChartInstance.resize()
   typeChartInstance && typeChartInstance.resize()
@@ -124,12 +237,18 @@ function resizeCharts() {
 
 onMounted(() => {
   trendChartInstance = echarts.init(trendChart.value)
-  trendChartInstance.setOption(trendOption)
+  fetchTrendData()
   typeChartInstance = echarts.init(typeChart.value)
-  typeChartInstance.setOption(typeOption)
+  fetchTypeData()
   keywordChartInstance = echarts.init(keywordChart.value)
   keywordChartInstance.setOption(keywordOption)
   window.addEventListener('resize', resizeCharts)
+})
+
+// 监听日期变化自动拉取数据
+watch(dateRange, () => {
+  fetchTrendData()
+  fetchTypeData()
 })
 
 onBeforeUnmount(() => {
